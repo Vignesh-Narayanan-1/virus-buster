@@ -19,7 +19,7 @@ const BUBBLE_SPEED = 8;
 const VIRUS_BASE_SPEED = 1;
 const VIRUS_SPAWN_RATE_START = 1000; // ms
 const VIRUS_SPAWN_ACCELERATION = 50; // ms reduction per 5 sec
-const MAX_VIRUSES_MISSED = 10;
+const MAX_VIRUSES_MISSED = 19;
 const BUBBLE_FIRE_RATE = 150; // ms between shots
 const MAX_AMMO = 20;
 const RELOAD_TIME = 2000; // ms
@@ -62,13 +62,14 @@ export function VirusBusterGame() {
   const animationFrameRef = useRef<number>();
   const lastFireTimeRef = useRef(0);
   const lastSpawnTimeRef = useRef(0);
-  const gameTimeRef = useRef(0);
   const lastDifficultyIncrease = useRef(0);
   const reloadTimerRef = useRef<NodeJS.Timeout>();
   const reloadProgressIntervalRef = useRef<NodeJS.Timeout>();
 
 
   const startReloading = useCallback(() => {
+    if (isReloading) return;
+
     setIsReloading(true);
     setReloadProgress(0);
 
@@ -84,8 +85,9 @@ export function VirusBusterGame() {
         setIsReloading(false);
         setReloadProgress(100);
         clearInterval(reloadProgressIntervalRef.current!);
+        reloadProgressIntervalRef.current = undefined;
     }, RELOAD_TIME);
-  }, []);
+  }, [isReloading]);
 
   const resetGame = useCallback(() => {
     setViruses([]);
@@ -95,7 +97,6 @@ export function VirusBusterGame() {
     setGameState('ready');
     setCannonAngle(0);
     setIsFiring(false);
-    gameTimeRef.current = 0;
     lastDifficultyIncrease.current = 0;
     setVirusSpawnRate(VIRUS_SPAWN_RATE_START);
     setAmmoCount(MAX_AMMO);
@@ -103,6 +104,7 @@ export function VirusBusterGame() {
     setReloadProgress(0);
     clearTimeout(reloadTimerRef.current);
     clearInterval(reloadProgressIntervalRef.current!);
+    reloadProgressIntervalRef.current = undefined;
     
     const storedHighScore = localStorage.getItem('virusBusterHighScore');
     if (storedHighScore) {
@@ -112,6 +114,11 @@ export function VirusBusterGame() {
 
   useEffect(() => {
     resetGame();
+    // Cleanup on unmount
+    return () => {
+        clearTimeout(reloadTimerRef.current);
+        clearInterval(reloadProgressIntervalRef.current!);
+    }
   }, [resetGame]);
   
   const handleGameOver = useCallback(() => {
@@ -192,7 +199,7 @@ export function VirusBusterGame() {
       }
       
       // --- Bubble Firing ---
-      if (isFiring && !isReloading && timestamp - lastFireTimeRef.current > BUBBLE_FIRE_RATE) {
+      if (isFiring && !isReloading && timestamp - lastFireTimeRef.current > BUBBLE_FIRE_RATE && ammoCount > 0) {
         lastFireTimeRef.current = timestamp;
         const angleRad = (cannonAngle - 90) * (Math.PI / 180);
         setBubbles(prev => [...prev, {
@@ -274,7 +281,7 @@ export function VirusBusterGame() {
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [gameState, isFiring, cannonAngle, virusSpawnRate, isReloading]);
+  }, [gameState, isFiring, cannonAngle, virusSpawnRate, isReloading, ammoCount]);
 
   useEffect(() => {
     if (ammoCount <= 0 && !isReloading) {
