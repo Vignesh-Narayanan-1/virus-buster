@@ -3,7 +3,7 @@ import type {NextConfig} from 'next';
 const nextConfig: NextConfig = {
   // Add the following lines to enable static export for GitHub Pages
   output: 'export',
-  // Replace 'your-repo-name' with the name of your GitHub repository
+  // Replace 'virus-buster' with the name of your new GitHub repository if it's different
   basePath: process.env.NODE_ENV === 'production' ? '/virus-buster' : '', 
   assetPrefix: process.env.NODE_ENV === 'production' ? '/virus-buster/' : '',
 
