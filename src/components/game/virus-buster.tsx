@@ -448,7 +448,7 @@ export function VirusBusterGame() {
               <div
                   className="absolute bottom-0 left-0 w-full h-auto rounded-full"
                   style={{
-                      width: BUBble_DIAMETER,
+                      width: BUBBLE_DIAMETER,
                       height: BUBBLE_DIAMETER,
                       backgroundColor: nextBubbleColor,
                       boxShadow: `inset 0 0 5px rgba(0,0,0,0.5), 0 0 5px ${nextBubbleColor}`,
