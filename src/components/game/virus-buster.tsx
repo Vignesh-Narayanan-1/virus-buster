@@ -7,7 +7,8 @@ import { RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 // --- GAME CONSTANTS ---
-const VIRUS_COLORS = ['#FF4136', '#0074D9', '#2ECC40', '#FFDC00', '#B10DC9'];
+const BUBBLE_COLORS = ['#FF4136', '#0074D9', '#2ECC40', '#FFDC00', '#B10DC9'];
+const VIRUS_COLOR = '#2ECC40'; // Green for all viruses
 const GAME_WIDTH = 468;
 const GAME_HEIGHT = 624;
 const CANNON_BASE_Y = GAME_HEIGHT - 40;
@@ -35,6 +36,7 @@ type Bubble = {
   y: number;
   dx: number;
   dy: number;
+  color: string;
 };
 
 type GameState = 'ready' | 'playing' | 'gameOver';
@@ -139,6 +141,9 @@ export function VirusBusterGame() {
 
   useEffect(() => {
     if (gameState !== 'playing') {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
       return;
     }
 
@@ -165,6 +170,7 @@ export function VirusBusterGame() {
           y: CANNON_BASE_Y,
           dx: Math.cos(angleRad) * BUBBLE_SPEED,
           dy: Math.sin(angleRad) * BUBBLE_SPEED,
+          color: BUBBLE_COLORS[Math.floor(Math.random() * BUBBLE_COLORS.length)],
         }]);
       }
 
@@ -175,60 +181,56 @@ export function VirusBusterGame() {
           id: timestamp,
           x: Math.random() * (GAME_WIDTH - VIRUS_DIAMETER),
           y: -VIRUS_DIAMETER,
-          color: VIRUS_COLORS[Math.floor(Math.random() * VIRUS_COLORS.length)],
+          color: VIRUS_COLOR,
           speed: VIRUS_BASE_SPEED + Math.random() * 1.5
         };
         setViruses(prev => [...prev, newVirus]);
       }
       
       // --- Update Positions & Collision Detection ---
-      let newBubbles: Bubble[] = [];
-      let newViruses: Virus[] = [...viruses];
-      let hitVirusIds = new Set<number>();
-      let hitBubbleIds = new Set<number>();
+      setBubbles(currentBubbles => {
+        let newBubbles = currentBubbles.map(b => ({ ...b, x: b.x + b.dx, y: b.y + b.dy }));
+        
+        setViruses(currentViruses => {
+            let missedCount = 0;
+            let remainingViruses = currentViruses.map(v => ({...v, y: v.y + v.speed})).filter(v => {
+                if (v.y >= GAME_HEIGHT) {
+                    missedCount++;
+                    return false;
+                }
+                return true;
+            });
 
-      // Update bubble positions
-      for (const bubble of bubbles) {
-        const newBubble = { ...bubble, x: bubble.x + bubble.dx, y: bubble.y + bubble.dy };
-        if (newBubble.y > -BUBBLE_DIAMETER && newBubble.x > -BUBBLE_DIAMETER && newBubble.x < GAME_WIDTH + BUBBLE_DIAMETER) {
-          newBubbles.push(newBubble);
-        }
-      }
-      
-      // Update virus positions and check for missed viruses
-      let missedCount = 0;
-      newViruses = newViruses.map(v => ({...v, y: v.y + v.speed})).filter(v => {
-        if (v.y >= GAME_HEIGHT) {
-          missedCount++;
-          return false;
-        }
-        return true;
+            if (missedCount > 0) {
+                setVirusesMissed(v => v + missedCount);
+            }
+
+            const hitVirusIds = new Set<number>();
+            const hitBubbleIds = new Set<number>();
+            
+            for (const bubble of newBubbles) {
+                for (const virus of remainingViruses) {
+                    if (hitVirusIds.has(virus.id) || hitBubbleIds.has(bubble.id)) continue;
+        
+                    const dist = Math.sqrt(Math.pow(bubble.x - (virus.x + VIRUS_DIAMETER/2), 2) + Math.pow(bubble.y - (virus.y + VIRUS_DIAMETER/2), 2));
+                    if (dist < (BUBBLE_DIAMETER / 2 + VIRUS_DIAMETER / 2)) {
+                        hitVirusIds.add(virus.id);
+                        hitBubbleIds.add(bubble.id);
+                    }
+                }
+            }
+
+            if(hitVirusIds.size > 0){
+                setScore(s => s + hitVirusIds.size * 10);
+                newBubbles = newBubbles.filter(b => !hitBubbleIds.has(b.id));
+                remainingViruses = remainingViruses.filter(v => !hitVirusIds.has(v.id));
+            }
+            
+            return remainingViruses;
+        });
+
+        return newBubbles.filter(b => b.y > -BUBBLE_DIAMETER && b.x > -BUBBLE_DIAMETER && b.x < GAME_WIDTH + BUBBLE_DIAMETER);
       });
-      if (missedCount > 0) {
-        setVirusesMissed(v => v + missedCount);
-      }
-      
-      // Collision detection
-      for (const bubble of newBubbles) {
-        for (const virus of newViruses) {
-          if (hitVirusIds.has(virus.id) || hitBubbleIds.has(bubble.id)) continue;
-
-          const dist = Math.sqrt(Math.pow(bubble.x - (virus.x + VIRUS_DIAMETER/2), 2) + Math.pow(bubble.y - (virus.y + VIRUS_DIAMETER/2), 2));
-          if (dist < (BUBBLE_DIAMETER / 2 + VIRUS_DIAMETER / 2)) {
-            hitVirusIds.add(virus.id);
-            hitBubbleIds.add(bubble.id);
-          }
-        }
-      }
-
-      if (hitVirusIds.size > 0) {
-        setScore(s => s + hitVirusIds.size * 10);
-        setBubbles(newBubbles.filter(b => !hitBubbleIds.has(b.id)));
-        setViruses(newViruses.filter(v => !hitVirusIds.has(v.id)));
-      } else {
-        setBubbles(newBubbles);
-        setViruses(newViruses);
-      }
       
       animationFrameRef.current = requestAnimationFrame(gameLoop);
     };
@@ -240,7 +242,7 @@ export function VirusBusterGame() {
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [gameState, isFiring, cannonAngle, virusSpawnRate, bubbles, viruses]);
+  }, [gameState, isFiring, cannonAngle, virusSpawnRate]);
 
   useEffect(() => {
       if (virusesMissed >= MAX_VIRUSES_MISSED && gameState === 'playing') {
@@ -326,14 +328,14 @@ export function VirusBusterGame() {
         {bubbles.map(bubble => (
             <div
                 key={bubble.id}
-                className="absolute rounded-full bg-primary/50"
+                className="absolute rounded-full"
                 style={{
                     width: BUBBLE_DIAMETER,
                     height: BUBBLE_DIAMETER,
-                    backgroundColor: 'hsl(var(--primary))',
+                    backgroundColor: bubble.color,
                     left: bubble.x - BUBBLE_DIAMETER/2,
                     top: bubble.y - BUBBLE_DIAMETER/2,
-                    boxShadow: `inset 0 0 3px rgba(255,255,255,0.5), 0 0 8px hsl(var(--primary))`,
+                    boxShadow: `inset 0 0 3px rgba(255,255,255,0.5), 0 0 8px ${bubble.color}`,
                     border: '2px solid hsl(var(--primary-foreground))',
                     zIndex: 10
                 }}
