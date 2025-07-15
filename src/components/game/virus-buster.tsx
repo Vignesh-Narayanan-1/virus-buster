@@ -115,17 +115,13 @@ export function VirusBusterGame() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (gameState !== 'playing') return;
-      if (e.repeat) return;
-      if (e.key === 'ArrowLeft') setCannonAngle(a => Math.max(-80, a - 10));
-      if (e.key === 'ArrowRight') setCannonAngle(a => Math.min(80, a + 10));
-      if (e.key === ' ') {
+      if (e.key === ' ' && gameState === 'playing') {
         e.preventDefault();
         setIsFiring(true);
       }
     };
     const handleKeyUp = (e: KeyboardEvent) => {
-        if (e.key === ' ') {
+        if (e.key === ' ' && gameState === 'playing') {
             e.preventDefault();
             setIsFiring(false);
         }
@@ -182,55 +178,64 @@ export function VirusBusterGame() {
       }
       
       // --- Update Positions & Collision ---
-      let newBubbles: Bubble[] = [];
-      let newViruses: Virus[] = [];
-      const hitVirusIds = new Set<number>();
-
-      // Update bubble positions
-      bubbles.forEach(bubble => {
-        const newBubble = { ...bubble, x: bubble.x + bubble.dx, y: bubble.y + bubble.dy };
-        if (newBubble.y > -BUBBLE_DIAMETER && newBubble.x > -BUBBLE_DIAMETER && newBubble.x < GAME_WIDTH + BUBBLE_DIAMETER) {
-          newBubbles.push(newBubble);
-        }
-      });
-
-      // Update virus positions
-      viruses.forEach(virus => {
-        const newVirus = { ...virus, y: virus.y + virus.speed };
-        if (newVirus.y < GAME_HEIGHT) {
-            newViruses.push(newVirus);
-        } else {
-            setVirusesMissed(v => v + 1);
-        }
-      });
-      
-      // Collision detection
-      const remainingBubbles: Bubble[] = [];
-      newBubbles.forEach(bubble => {
-        let hasHit = false;
-        newViruses.forEach(virus => {
-          if (!hitVirusIds.has(virus.id)) {
-            const dist = Math.sqrt(Math.pow(bubble.x - (virus.x + VIRUS_DIAMETER/2), 2) + Math.pow(bubble.y - (virus.y + VIRUS_DIAMETER/2), 2));
-            if (dist < (BUBBLE_DIAMETER / 2 + VIRUS_DIAMETER / 2)) {
-              hasHit = true;
-              hitVirusIds.add(virus.id);
-            }
+      setBubbles(prevBubbles => {
+        const remainingBubbles: Bubble[] = [];
+        prevBubbles.forEach(bubble => {
+          const newBubble = { ...bubble, x: bubble.x + bubble.dx, y: bubble.y + bubble.dy };
+          if (newBubble.y > -BUBBLE_DIAMETER && newBubble.x > -BUBBLE_DIAMETER && newBubble.x < GAME_WIDTH + BUBBLE_DIAMETER) {
+            remainingBubbles.push(newBubble);
           }
         });
-        if (!hasHit) {
-          remainingBubbles.push(bubble);
-        }
+        return remainingBubbles;
       });
-      
-      const remainingViruses = newViruses.filter(v => !hitVirusIds.has(v.id));
-      const hits = hitVirusIds.size;
-      
-      if(hits > 0) {
-        setScore(s => s + hits * 10);
-      }
-      
-      setBubbles(remainingBubbles);
-      setViruses(remainingViruses);
+
+      setViruses(prevViruses => {
+        const hitVirusIds = new Set<number>();
+        const remainingViruses: Virus[] = [];
+
+        prevViruses.forEach(virus => {
+            let hasBeenHit = false;
+            setBubbles(prevBubbles => {
+                const bubblesToKeep: Bubble[] = [];
+                prevBubbles.forEach(bubble => {
+                    const dist = Math.sqrt(Math.pow(bubble.x - (virus.x + VIRUS_DIAMETER/2), 2) + Math.pow(bubble.y - (virus.y + VIRUS_DIAMETER/2), 2));
+                    if (!hasBeenHit && !hitVirusIds.has(virus.id) && dist < (BUBBLE_DIAMETER / 2 + VIRUS_DIAMETER / 2)) {
+                        hasBeenHit = true;
+                        hitVirusIds.add(virus.id);
+                    } else {
+                        bubblesToKeep.push(bubble);
+                    }
+                });
+                return bubblesToKeep;
+            });
+            
+            if (!hasBeenHit) {
+                const newVirus = { ...virus, y: virus.y + virus.speed };
+                if (newVirus.y < GAME_HEIGHT) {
+                    remainingViruses.push(newVirus);
+                } else {
+                    setVirusesMissed(v => v + 1);
+                }
+            }
+        });
+
+        if (hitVirusIds.size > 0) {
+            setScore(s => s + hitVirusIds.size * 10);
+            setBubbles(prevBubbles => prevBubbles.filter(b => {
+                let hit = false;
+                remainingViruses.forEach(v => {
+                    const dist = Math.sqrt(Math.pow(b.x - (v.x + VIRUS_DIAMETER/2), 2) + Math.pow(b.y - (v.y + VIRUS_DIAMETER/2), 2));
+                    if (dist < (BUBBLE_DIAMETER / 2 + VIRUS_DIAMETER / 2)) {
+                        hit = true;
+                        hitVirusIds.add(v.id);
+                    }
+                });
+                return !hit;
+            }));
+        }
+        
+        return remainingViruses.filter(v => !hitVirusIds.has(v.id));
+      });
       
       animationFrameRef.current = requestAnimationFrame(gameLoop);
     };
@@ -244,7 +249,7 @@ export function VirusBusterGame() {
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [gameState, isFiring, bubbles, viruses, cannonAngle, virusSpawnRate]);
+  }, [gameState, isFiring, cannonAngle, virusSpawnRate]);
 
   useEffect(() => {
       if (virusesMissed >= MAX_VIRUSES_MISSED && gameState === 'playing') {
