@@ -5,9 +5,10 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Progress } from '@/components/ui/progress';
 
 // --- GAME CONSTANTS ---
-const BUBBLE_COLORS = ['#FF4136', '#0074D9', '#2ECC40', '#FFDC00', '#B10DC9'];
+const BUBBLE_COLORS = ['#FF4136', '#0074D9', '#FFDC00', '#B10DC9', '#FF851B'];
 const VIRUS_COLOR = '#2ECC40'; // Green for all viruses
 const GAME_WIDTH = 468;
 const GAME_HEIGHT = 624;
@@ -20,6 +21,8 @@ const VIRUS_SPAWN_RATE_START = 1000; // ms
 const VIRUS_SPAWN_ACCELERATION = 50; // ms reduction per 5 sec
 const MAX_VIRUSES_MISSED = 10;
 const BUBBLE_FIRE_RATE = 150; // ms between shots
+const MAX_AMMO = 20;
+const RELOAD_TIME = 2000; // ms
 
 // --- TYPES ---
 type Virus = {
@@ -51,6 +54,9 @@ export function VirusBusterGame() {
   const [virusesMissed, setVirusesMissed] = useState(0);
   const [isFiring, setIsFiring] = useState(false);
   const [virusSpawnRate, setVirusSpawnRate] = useState(VIRUS_SPAWN_RATE_START);
+  const [ammoCount, setAmmoCount] = useState(MAX_AMMO);
+  const [isReloading, setIsReloading] = useState(false);
+  const [reloadProgress, setReloadProgress] = useState(0);
 
   const gameAreaRef = useRef<HTMLDivElement>(null);
   const animationFrameRef = useRef<number>();
@@ -58,6 +64,28 @@ export function VirusBusterGame() {
   const lastSpawnTimeRef = useRef(0);
   const gameTimeRef = useRef(0);
   const lastDifficultyIncrease = useRef(0);
+  const reloadTimerRef = useRef<NodeJS.Timeout>();
+  const reloadProgressIntervalRef = useRef<NodeJS.Timeout>();
+
+
+  const startReloading = useCallback(() => {
+    setIsReloading(true);
+    setReloadProgress(0);
+
+    const startTime = Date.now();
+    reloadProgressIntervalRef.current = setInterval(() => {
+        const elapsedTime = Date.now() - startTime;
+        const progress = Math.min(100, (elapsedTime / RELOAD_TIME) * 100);
+        setReloadProgress(progress);
+    }, 50);
+
+    reloadTimerRef.current = setTimeout(() => {
+        setAmmoCount(MAX_AMMO);
+        setIsReloading(false);
+        setReloadProgress(100);
+        clearInterval(reloadProgressIntervalRef.current!);
+    }, RELOAD_TIME);
+  }, []);
 
   const resetGame = useCallback(() => {
     setViruses([]);
@@ -70,6 +98,12 @@ export function VirusBusterGame() {
     gameTimeRef.current = 0;
     lastDifficultyIncrease.current = 0;
     setVirusSpawnRate(VIRUS_SPAWN_RATE_START);
+    setAmmoCount(MAX_AMMO);
+    setIsReloading(false);
+    setReloadProgress(0);
+    clearTimeout(reloadTimerRef.current);
+    clearInterval(reloadProgressIntervalRef.current!);
+    
     const storedHighScore = localStorage.getItem('virusBusterHighScore');
     if (storedHighScore) {
       setHighScore(parseInt(storedHighScore, 10));
@@ -148,11 +182,8 @@ export function VirusBusterGame() {
     }
 
     const gameLoop = (timestamp: number) => {
-      if (!gameTimeRef.current) {
-        gameTimeRef.current = timestamp;
-      }
-      const deltaTime = timestamp - gameTimeRef.current;
-      gameTimeRef.current = timestamp;
+      if (!lastSpawnTimeRef.current) lastSpawnTimeRef.current = timestamp;
+      if (!lastDifficultyIncrease.current) lastDifficultyIncrease.current = timestamp;
 
       // --- Difficulty Scaling ---
       if (timestamp - lastDifficultyIncrease.current > 5000) {
@@ -161,7 +192,7 @@ export function VirusBusterGame() {
       }
       
       // --- Bubble Firing ---
-      if (isFiring && timestamp - lastFireTimeRef.current > BUBBLE_FIRE_RATE) {
+      if (isFiring && !isReloading && timestamp - lastFireTimeRef.current > BUBBLE_FIRE_RATE) {
         lastFireTimeRef.current = timestamp;
         const angleRad = (cannonAngle - 90) * (Math.PI / 180);
         setBubbles(prev => [...prev, {
@@ -172,6 +203,7 @@ export function VirusBusterGame() {
           dy: Math.sin(angleRad) * BUBBLE_SPEED,
           color: BUBBLE_COLORS[Math.floor(Math.random() * BUBBLE_COLORS.length)],
         }]);
+        setAmmoCount(prev => prev - 1);
       }
 
       // --- Virus Spawning ---
@@ -242,7 +274,13 @@ export function VirusBusterGame() {
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [gameState, isFiring, cannonAngle, virusSpawnRate]);
+  }, [gameState, isFiring, cannonAngle, virusSpawnRate, isReloading]);
+
+  useEffect(() => {
+    if (ammoCount <= 0 && !isReloading) {
+        startReloading();
+    }
+  }, [ammoCount, isReloading, startReloading]);
 
   useEffect(() => {
       if (virusesMissed >= MAX_VIRUSES_MISSED && gameState === 'playing') {
@@ -357,8 +395,12 @@ export function VirusBusterGame() {
           <div className="w-full h-full bg-primary/80 rounded-t-md border-2 border-primary" />
         </div>
       </div>
-       <div className="text-center mt-4 text-destructive w-full max-w-lg">
-          <p>Viruses Missed: {virusesMissed} / {MAX_VIRUSES_MISSED}</p>
+      <div className="text-center mt-4 w-full max-w-lg">
+          <p className="text-destructive">Viruses Missed: {virusesMissed} / {MAX_VIRUSES_MISSED}</p>
+          <div className="text-accent mt-2">
+            <p>Ammo: {isReloading ? 'Reloading...' : `${ammoCount} / ${MAX_AMMO}`}</p>
+            {isReloading && <Progress value={reloadProgress} className="h-2 mt-1" />}
+          </div>
        </div>
     </div>
   );
