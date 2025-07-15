@@ -4,8 +4,8 @@ const nextConfig: NextConfig = {
   // Add the following lines to enable static export for GitHub Pages
   output: 'export',
   // Replace 'your-repo-name' with the name of your GitHub repository
-  basePath: process.env.NODE_ENV === 'production' ? '/your-repo-name' : '', 
-  assetPrefix: process.env.NODE_ENV === 'production' ? '/your-repo-name/' : '',
+  basePath: process.env.NODE_ENV === 'production' ? '/virus-buster' : '', 
+  assetPrefix: process.env.NODE_ENV === 'production' ? '/virus-buster/' : '',
 
   /* config options here */
   typescript: {
