@@ -6,85 +6,74 @@ import { RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 // --- GAME CONSTANTS ---
-const BUBBLE_COLORS = ['#FF4136', '#0074D9', '#2ECC40', '#FFDC00', '#B10DC9']; // Red, Blue, Green, Yellow, Purple
-const GRID_COLS = 13;
-const GRID_ROWS = 15;
-const BUBBLE_DIAMETER = 36;
-const PROJECTILE_SPEED = 15;
-const ADVANCE_SHOT_COUNT = 5;
-const GAME_OVER_ROW = 12;
+const VIRUS_COLORS = ['#FF4136', '#0074D9', '#2ECC40', '#FFDC00', '#B10DC9'];
+const GAME_WIDTH = 468;
+const GAME_HEIGHT = 624;
+const CANNON_BASE_Y = GAME_HEIGHT - 40;
+const BUBBLE_DIAMETER = 24;
+const VIRUS_DIAMETER = 30;
+const BUBBLE_SPEED = 8;
+const VIRUS_BASE_SPEED = 1;
+const VIRUS_SPAWN_RATE_START = 1000; // ms
+const VIRUS_SPAWN_ACCELERATION = 50; // ms reduction per 5 sec
+const MAX_VIRUSES_MISSED = 10;
+const BUBBLE_FIRE_RATE = 150; // ms between shots
 
 // --- TYPES ---
-type Bubble = {
-  id: string;
-  color: string;
-  row: number;
-  col: number;
-  isPopping?: boolean;
-};
-
-type Projectile = {
+type Virus = {
+  id: number;
   x: number;
   y: number;
   color: string;
+  speed: number;
+};
+
+type Bubble = {
+  id: number;
+  x: number;
+  y: number;
   dx: number;
   dy: number;
 };
 
 type GameState = 'ready' | 'playing' | 'gameOver';
 
-// --- HELPER FUNCTIONS ---
-const getBubbleXY = (row: number, col: number) => {
-  const x = col * BUBBLE_DIAMETER + (row % 2) * (BUBBLE_DIAMETER / 2);
-  const y = row * (BUBBLE_DIAMETER * 0.866);
-  return { x, y };
-};
-
 export function VirusBusterGame() {
-  const [grid, setGrid] = useState<Map<string, Bubble>>(new Map());
-  const [projectile, setProjectile] = useState<Projectile | null>(null);
-  const [nextBubbleColor, setNextBubbleColor] = useState('');
+  const [viruses, setViruses] = useState<Virus[]>([]);
+  const [bubbles, setBubbles] = useState<Bubble[]>([]);
   const [cannonAngle, setCannonAngle] = useState(0);
   const [gameState, setGameState] = useState<GameState>('ready');
   const [score, setScore] = useState(0);
   const [highScore, setHighScore] = useState(0);
-  const [shotsUntilAdvance, setShotsUntilAdvance] = useState(ADVANCE_SHOT_COUNT);
+  const [virusesMissed, setVirusesMissed] = useState(0);
+  const [isFiring, setIsFiring] = useState(false);
+  const [virusSpawnRate, setVirusSpawnRate] = useState(VIRUS_SPAWN_RATE_START);
 
   const gameAreaRef = useRef<HTMLDivElement>(null);
   const animationFrameRef = useRef<number>();
+  const lastFireTimeRef = useRef(0);
+  const lastSpawnTimeRef = useRef(0);
+  const gameTimeRef = useRef(0);
+  const lastDifficultyIncrease = useRef(0);
 
-  const getAvailableColors = useCallback(() => {
-    const colorsInGrid = new Set(Array.from(grid.values()).map(b => b.color));
-    return colorsInGrid.size > 0 ? Array.from(colorsInGrid) : BUBBLE_COLORS;
-  }, [grid]);
-
-  const resetBubbles = useCallback(() => {
-    const newGrid = new Map<string, Bubble>();
-    for (let row = 0; row < 5; row++) {
-      for (let col = 0; col < GRID_COLS - (row % 2); col++) {
-        const color = BUBBLE_COLORS[Math.floor(Math.random() * BUBBLE_COLORS.length)];
-        const id = `${row}-${col}`;
-        newGrid.set(id, { id, color, row, col });
-      }
-    }
-    setGrid(newGrid);
-    setNextBubbleColor(BUBBLE_COLORS[Math.floor(Math.random() * BUBBLE_COLORS.length)]);
-  }, []);
-  
   const resetGame = useCallback(() => {
-    resetBubbles();
+    setViruses([]);
+    setBubbles([]);
     setScore(0);
+    setVirusesMissed(0);
     setGameState('ready');
-    setProjectile(null);
-    setShotsUntilAdvance(ADVANCE_SHOT_COUNT);
     setCannonAngle(0);
-  }, [resetBubbles]);
-
-  useEffect(() => {
+    setIsFiring(false);
+    gameTimeRef.current = 0;
+    lastDifficultyIncrease.current = 0;
+    setVirusSpawnRate(VIRUS_SPAWN_RATE_START);
     const storedHighScore = localStorage.getItem('virusBusterHighScore');
     if (storedHighScore) {
       setHighScore(parseInt(storedHighScore, 10));
     }
+  }, []);
+
+  useEffect(() => {
     resetGame();
   }, [resetGame]);
   
@@ -94,146 +83,15 @@ export function VirusBusterGame() {
       localStorage.setItem('virusBusterHighScore', score.toString());
     }
     setGameState('gameOver');
+    setIsFiring(false);
   }, [score, highScore]);
-
-
-  const findMatches = useCallback((startBubble: Bubble) => {
-    const toCheck = [startBubble];
-    const checked = new Set<string>();
-    const matches = [];
-
-    while (toCheck.length > 0) {
-      const current = toCheck.pop()!;
-      if (checked.has(current.id) || current.color !== startBubble.color) continue;
-      
-      checked.add(current.id);
-      matches.push(current);
-
-      const neighbors = getNeighbors(current.row, current.col);
-      for (const neighborId of neighbors) {
-        if (grid.has(neighborId) && !checked.has(neighborId)) {
-          toCheck.push(grid.get(neighborId)!);
-        }
-      }
-    }
-    return matches;
-  }, [grid]);
-
-  const popBubbles = useCallback((bubblesToPop: Bubble[]) => {
-    const newGrid = new Map(grid);
-    let popCount = 0;
-    
-    bubblesToPop.forEach(bubble => {
-      const bubbleInGrid = newGrid.get(bubble.id);
-      if(bubbleInGrid){
-        newGrid.set(bubble.id, { ...bubbleInGrid, isPopping: true });
-        popCount++;
-      }
-    });
-
-    setGrid(newGrid);
-    setScore(s => s + popCount * 10);
-    
-    setTimeout(() => {
-      const gridAfterPop = new Map(newGrid);
-      bubblesToPop.forEach(bubble => gridAfterPop.delete(bubble.id));
-      setGrid(gridAfterPop);
-      
-      // Check for floating bubbles after the pop animation
-      const floating = findFloatingBubbles(gridAfterPop);
-      if(floating.length > 0) {
-        popBubbles(floating);
-        setScore(s => s + floating.length * 20); // Bonus for dropping
-      }
-
-    }, 300);
-  }, [grid]);
-
-  const findFloatingBubbles = (currentGrid: Map<string, Bubble>) => {
-      const connected = new Set<string>();
-      const toCheck = [];
-
-      for(let c = 0; c < GRID_COLS; c++){
-          const id = `0-${c}`;
-          if(currentGrid.has(id)) toCheck.push(currentGrid.get(id)!);
-      }
-
-      while(toCheck.length > 0) {
-          const bubble = toCheck.pop()!;
-          if(connected.has(bubble.id)) continue;
-          connected.add(bubble.id);
-          const neighbors = getNeighbors(bubble.row, bubble.col);
-          for(const neighborId of neighbors){
-              if(currentGrid.has(neighborId) && !connected.has(neighborId)){
-                  toCheck.push(currentGrid.get(neighborId)!);
-              }
-          }
-      }
-
-      const floating: Bubble[] = [];
-      for(const bubble of currentGrid.values()){
-          if(!connected.has(bubble.id)){
-              floating.push(bubble);
-          }
-      }
-      return floating;
-  }
-  
-  const getNeighbors = (row: number, col: number) => {
-    const isOddRow = row % 2 === 1;
-    const neighborCoords = [
-      { r: row, c: col - 1 }, { r: row, c: col + 1 }, // left, right
-      { r: row - 1, c: col + (isOddRow ? 0 : -1) }, { r: row - 1, c: col + (isOddRow ? 1 : 0) }, // top-left, top-right
-      { r: row + 1, c: col + (isOddRow ? 0 : -1) }, { r: row + 1, c: col + (isOddRow ? 1 : 0) }, // bottom-left, bottom-right
-    ];
-    return neighborCoords
-      .filter(c => c.c >= 0 && c.c < GRID_COLS - (c.r % 2))
-      .map(c => `${c.r}-${c.c}`);
-  };
-
-  const advanceViruses = useCallback(() => {
-    const newGrid = new Map<string, Bubble>();
-    let isGameOver = false;
-
-    grid.forEach(bubble => {
-      const newRow = bubble.row + 1;
-      if (newRow >= GAME_OVER_ROW) isGameOver = true;
-      const newId = `${newRow}-${bubble.col}`;
-      newGrid.set(newId, { ...bubble, row: newRow, id: newId });
-    });
-
-    for (let col = 0; col < GRID_COLS; col++) {
-      const color = BUBBLE_COLORS[Math.floor(Math.random() * BUBBLE_COLORS.length)];
-      const id = `0-${col}`;
-      newGrid.set(id, { id, color, row: 0, col });
-    }
-
-    setGrid(newGrid);
-    if (isGameOver) handleGameOver();
-  }, [grid, handleGameOver]);
-
-  const handleShoot = useCallback(() => {
-    if (gameState !== 'playing' || projectile) return;
-
-    const angleRad = (cannonAngle - 90) * (Math.PI / 180);
-    setProjectile({
-      x: (GRID_COLS * BUBBLE_DIAMETER) / 2,
-      y: GRID_ROWS * BUBBLE_DIAMETER * 0.866,
-      color: nextBubbleColor,
-      dx: Math.cos(angleRad) * PROJECTILE_SPEED,
-      dy: Math.sin(angleRad) * PROJECTILE_SPEED,
-    });
-    const availableColors = getAvailableColors();
-    setNextBubbleColor(availableColors[Math.floor(Math.random() * availableColors.length)]);
-    setShotsUntilAdvance(s => s - 1);
-  }, [gameState, projectile, cannonAngle, nextBubbleColor, getAvailableColors]);
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (gameState !== 'playing' || !gameAreaRef.current) return;
     const rect = gameAreaRef.current.getBoundingClientRect();
     const gameX = e.clientX - rect.left;
     const cannonX = rect.width / 2;
-    const cannonY = rect.height;
+    const cannonY = CANNON_BASE_Y;
     const angleRad = Math.atan2(e.clientY - rect.top - cannonY, gameX - cannonX);
     let angleDeg = angleRad * (180 / Math.PI) + 90;
     if (angleDeg < -80) angleDeg = -80;
@@ -241,93 +99,143 @@ export function VirusBusterGame() {
     setCannonAngle(angleDeg);
   };
   
-  const handlePointerClick = (e: React.PointerEvent<HTMLDivElement>) => {
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (gameState === 'ready') {
       setGameState('playing');
     } else if (gameState === 'playing') {
-      handleShoot();
+      setIsFiring(true);
+    }
+  };
+
+  const handlePointerUp = () => {
+    if (gameState === 'playing') {
+      setIsFiring(false);
     }
   };
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (gameState !== 'playing') return;
-      if (e.key === 'ArrowLeft') setCannonAngle(a => Math.max(-80, a - 5));
-      if (e.key === 'ArrowRight') setCannonAngle(a => Math.min(80, a + 5));
+      if (e.repeat) return;
+      if (e.key === 'ArrowLeft') setCannonAngle(a => Math.max(-80, a - 10));
+      if (e.key === 'ArrowRight') setCannonAngle(a => Math.min(80, a + 10));
       if (e.key === ' ') {
         e.preventDefault();
-        handleShoot();
+        setIsFiring(true);
       }
     };
+    const handleKeyUp = (e: KeyboardEvent) => {
+        if (e.key === ' ') {
+            e.preventDefault();
+            setIsFiring(false);
+        }
+    }
+
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [gameState, handleShoot]);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+        window.removeEventListener('keydown', handleKeyDown);
+        window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [gameState]);
+
 
   useEffect(() => {
-    if (shotsUntilAdvance > 0) return;
-    setShotsUntilAdvance(ADVANCE_SHOT_COUNT);
-    advanceViruses();
-  }, [shotsUntilAdvance, advanceViruses]);
+    const gameLoop = (timestamp: number) => {
+      if (gameState !== 'playing') {
+        if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+        return;
+      }
 
-  useEffect(() => {
-    const gameLoop = () => {
-      if (!projectile) return;
-      
-      let newX = projectile.x + projectile.dx;
-      let newY = projectile.y + projectile.dy;
-      let newDx = projectile.dx;
+      gameTimeRef.current = timestamp;
 
-      const gameWidth = GRID_COLS * BUBBLE_DIAMETER;
-      if (newX < BUBBLE_DIAMETER/2 || newX > gameWidth - BUBBLE_DIAMETER/2) {
-        newDx = -newDx;
-        newX = projectile.x + newDx;
+      // --- Difficulty Scaling ---
+      if (timestamp - lastDifficultyIncrease.current > 5000) {
+        setVirusSpawnRate(r => Math.max(200, r - VIRUS_SPAWN_ACCELERATION));
+        lastDifficultyIncrease.current = timestamp;
       }
       
-      let stuck = false;
-      if (newY <= BUBBLE_DIAMETER/2) {
-          stuck = true;
+      // --- Bubble Firing ---
+      if (isFiring && timestamp - lastFireTimeRef.current > BUBBLE_FIRE_RATE) {
+        lastFireTimeRef.current = timestamp;
+        const angleRad = (cannonAngle - 90) * (Math.PI / 180);
+        setBubbles(prev => [...prev, {
+          id: timestamp,
+          x: GAME_WIDTH / 2,
+          y: CANNON_BASE_Y,
+          dx: Math.cos(angleRad) * BUBBLE_SPEED,
+          dy: Math.sin(angleRad) * BUBBLE_SPEED,
+        }]);
       }
 
-      // Collision detection with grid bubbles
-      for (const bubble of grid.values()) {
-        const { x: bx, y: by } = getBubbleXY(bubble.row, bubble.col);
-        const dist = Math.sqrt(Math.pow(newX - (bx + BUBBLE_DIAMETER/2), 2) + Math.pow(newY - (by + BUBBLE_DIAMETER/2), 2));
-        if (dist < BUBBLE_DIAMETER) {
-          stuck = true;
-          break;
+      // --- Virus Spawning ---
+      if (timestamp - lastSpawnTimeRef.current > virusSpawnRate) {
+        lastSpawnTimeRef.current = timestamp;
+        const newVirus: Virus = {
+          id: timestamp,
+          x: Math.random() * (GAME_WIDTH - VIRUS_DIAMETER),
+          y: -VIRUS_DIAMETER,
+          color: VIRUS_COLORS[Math.floor(Math.random() * VIRUS_COLORS.length)],
+          speed: VIRUS_BASE_SPEED + Math.random() * 1.5
+        };
+        setViruses(prev => [...prev, newVirus]);
+      }
+      
+      // --- Update Positions & Collision ---
+      let newBubbles: Bubble[] = [];
+      let newViruses: Virus[] = [];
+      const hitVirusIds = new Set<number>();
+
+      // Update bubble positions
+      bubbles.forEach(bubble => {
+        const newBubble = { ...bubble, x: bubble.x + bubble.dx, y: bubble.y + bubble.dy };
+        if (newBubble.y > -BUBBLE_DIAMETER && newBubble.x > -BUBBLE_DIAMETER && newBubble.x < GAME_WIDTH + BUBBLE_DIAMETER) {
+          newBubbles.push(newBubble);
         }
-      }
+      });
 
-      if (stuck) {
-        setProjectile(null);
-        
-        // Snap to grid
-        const row = Math.round(newY / (BUBBLE_DIAMETER * 0.866));
-        const col = Math.round((newX - (row % 2) * (BUBBLE_DIAMETER / 2)) / BUBBLE_DIAMETER);
-        const newId = `${row}-${col}`;
-        
-        if (!grid.has(newId) && col >= 0 && col < GRID_COLS - (row%2) && row >= 0) {
-          const newBubble: Bubble = { id: newId, color: projectile.color, row, col };
-          const newGrid = new Map(grid).set(newId, newBubble);
-          setGrid(newGrid);
-
-          if (row >= GAME_OVER_ROW) {
-            handleGameOver();
-            return;
-          }
-
-          const matches = findMatches(newBubble);
-          if (matches.length >= 3) {
-            popBubbles(matches);
-          }
+      // Update virus positions
+      viruses.forEach(virus => {
+        const newVirus = { ...virus, y: virus.y + virus.speed };
+        if (newVirus.y < GAME_HEIGHT) {
+            newViruses.push(newVirus);
+        } else {
+            setVirusesMissed(v => v + 1);
         }
-      } else {
-        setProjectile(p => p ? {...p, x: newX, y: newY, dx: newDx} : null);
+      });
+      
+      // Collision detection
+      const remainingBubbles: Bubble[] = [];
+      newBubbles.forEach(bubble => {
+        let hasHit = false;
+        newViruses.forEach(virus => {
+          if (!hitVirusIds.has(virus.id)) {
+            const dist = Math.sqrt(Math.pow(bubble.x - (virus.x + VIRUS_DIAMETER/2), 2) + Math.pow(bubble.y - (virus.y + VIRUS_DIAMETER/2), 2));
+            if (dist < (BUBBLE_DIAMETER / 2 + VIRUS_DIAMETER / 2)) {
+              hasHit = true;
+              hitVirusIds.add(virus.id);
+            }
+          }
+        });
+        if (!hasHit) {
+          remainingBubbles.push(bubble);
+        }
+      });
+      
+      const remainingViruses = newViruses.filter(v => !hitVirusIds.has(v.id));
+      const hits = hitVirusIds.size;
+      
+      if(hits > 0) {
+        setScore(s => s + hits * 10);
       }
+      
+      setBubbles(remainingBubbles);
+      setViruses(remainingViruses);
+      
       animationFrameRef.current = requestAnimationFrame(gameLoop);
     };
 
-    if (projectile) {
+    if (gameState === 'playing') {
       animationFrameRef.current = requestAnimationFrame(gameLoop);
     }
 
@@ -336,7 +244,13 @@ export function VirusBusterGame() {
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [projectile, grid, findMatches, popBubbles, handleGameOver]);
+  }, [gameState, isFiring, bubbles, viruses, cannonAngle, virusSpawnRate]);
+
+  useEffect(() => {
+      if (virusesMissed >= MAX_VIRUSES_MISSED && gameState === 'playing') {
+          handleGameOver();
+      }
+  }, [virusesMissed, gameState, handleGameOver])
 
 
   return (
@@ -350,9 +264,11 @@ export function VirusBusterGame() {
       <div
         ref={gameAreaRef}
         className="relative bg-background border-4 border-primary/50 overflow-hidden touch-none scanlines"
-        style={{ width: GRID_COLS * BUBBLE_DIAMETER, height: GRID_ROWS * BUBBLE_DIAMETER * 0.866 }}
+        style={{ width: GAME_WIDTH, height: GAME_HEIGHT }}
         onPointerMove={handlePointerMove}
-        onClick={handlePointerClick}
+        onPointerDown={handlePointerDown}
+        onPointerUp={handlePointerUp}
+        onPointerLeave={handlePointerUp}
       >
         <AnimatePresence>
           {gameState === 'gameOver' && (
@@ -377,8 +293,9 @@ export function VirusBusterGame() {
               className="absolute inset-0 bg-black/80 z-20 flex flex-col items-center justify-center text-center p-4"
             >
               <h2 className="text-4xl text-accent font-bold mb-4">HOW TO PLAY</h2>
-              <p className="text-lg text-primary mb-2">Aim: Mouse / Finger / Arrow Keys</p>
-              <p className="text-lg text-primary mb-6">Shoot: Click / Tap / Spacebar</p>
+              <p className="text-lg text-primary mb-2">Aim: Mouse / Finger</p>
+              <p className="text-lg text-primary mb-6">Shoot: Hold Click / Tap or Spacebar</p>
+              <p className="text-lg text-destructive mb-6">Don't let {MAX_VIRUSES_MISSED} viruses reach the bottom!</p>
               <Button onClick={() => setGameState('playing')} variant="secondary" size="lg">
                 Start Game
               </Button>
@@ -386,80 +303,64 @@ export function VirusBusterGame() {
           )}
         </AnimatePresence>
 
+        {/* Render Viruses */}
         <AnimatePresence>
-          {Array.from(grid.values()).map(bubble => {
-            const { x, y } = getBubbleXY(bubble.row, bubble.col);
-            return (
-              <motion.div
-                key={bubble.id}
-                layout
-                initial={{ scale: 0, opacity: 0 }}
-                animate={{
-                    scale: bubble.isPopping ? [1, 1.2, 0] : 1, 
-                    opacity: bubble.isPopping ? [1, 1, 0] : 1
-                }}
-                exit={{ scale: 0, opacity: 0 }}
-                transition={{ duration: 0.3 }}
-                className="absolute w-full h-full rounded-full"
-                style={{
-                  width: BUBBLE_DIAMETER,
-                  height: BUBBLE_DIAMETER,
-                  backgroundColor: bubble.color,
-                  left: x,
-                  top: y,
-                  boxShadow: `inset 0 0 5px rgba(0,0,0,0.5), 0 0 5px ${bubble.color}`,
-                  border: '2px solid rgba(255,255,255,0.3)'
-                }}
-              />
-            );
-          })}
+            {viruses.map(virus => (
+                 <motion.div
+                    key={virus.id}
+                    initial={{ scale: 0, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    exit={{ scale: 0, opacity: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="absolute rounded-full"
+                    style={{
+                        width: VIRUS_DIAMETER,
+                        height: VIRUS_DIAMETER,
+                        backgroundColor: virus.color,
+                        left: virus.x,
+                        top: virus.y,
+                        boxShadow: `inset 0 0 5px rgba(0,0,0,0.5), 0 0 5px ${virus.color}`,
+                        border: '2px solid rgba(255,255,255,0.3)'
+                    }}
+                 />
+            ))}
         </AnimatePresence>
         
-        {projectile && (
+        {/* Render Bubbles */}
+        {bubbles.map(bubble => (
             <div
-                className="absolute w-full h-full rounded-full"
+                key={bubble.id}
+                className="absolute rounded-full bg-primary/50"
                 style={{
                     width: BUBBLE_DIAMETER,
                     height: BUBBLE_DIAMETER,
-                    backgroundColor: projectile.color,
-                    left: projectile.x - BUBBLE_DIAMETER/2,
-                    top: projectile.y - BUBBLE_DIAMETER/2,
-                    boxShadow: `inset 0 0 5px rgba(0,0,0,0.5), 0 0 5px ${projectile.color}`,
-                    border: '2px solid rgba(255,255,255,0.3)',
+                    backgroundColor: 'hsl(var(--primary))',
+                    left: bubble.x - BUBBLE_DIAMETER/2,
+                    top: bubble.y - BUBBLE_DIAMETER/2,
+                    boxShadow: `inset 0 0 3px rgba(255,255,255,0.5), 0 0 8px hsl(var(--primary))`,
+                    border: '2px solid hsl(var(--primary-foreground))',
                     zIndex: 10
                 }}
             />
-        )}
+        ))}
         
         {/* Cannon */}
         <div 
-          className="absolute bottom-0"
+          className="absolute"
           style={{
-            left: `calc(50% - ${BUBBLE_DIAMETER / 2}px)`,
-            width: BUBBLE_DIAMETER,
-            height: BUBBLE_DIAMETER * 2,
+            left: `50%`,
+            bottom: 0,
+            width: BUBBLE_DIAMETER * 1.5,
+            height: BUBBLE_DIAMETER * 3,
             transformOrigin: '50% 100%',
             transform: `translateX(-50%) rotate(${cannonAngle}deg)`,
-            left: '50%'
           }}
         >
           <div className="w-full h-full bg-primary/80 rounded-t-md border-2 border-primary" />
-          {gameState === 'playing' && !projectile && nextBubbleColor && (
-              <div
-                  className="absolute bottom-0 left-0 w-full h-auto rounded-full"
-                  style={{
-                      width: BUBBLE_DIAMETER,
-                      height: BUBBLE_DIAMETER,
-                      backgroundColor: nextBubbleColor,
-                      boxShadow: `inset 0 0 5px rgba(0,0,0,0.5), 0 0 5px ${nextBubbleColor}`,
-                      border: '2px solid rgba(255,255,255,0.3)'
-                  }}
-              />
-          )}
         </div>
       </div>
-       <div className="text-center mt-4 text-muted-foreground w-full max-w-lg">
-          <p>Viruses advance in: {shotsUntilAdvance} shots</p>
+       <div className="text-center mt-4 text-destructive w-full max-w-lg">
+          <p>Viruses Missed: {virusesMissed} / {MAX_VIRUSES_MISSED}</p>
        </div>
     </div>
   );
